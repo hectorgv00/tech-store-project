@@ -1,4 +1,3 @@
-# app.py
 from flask import Flask, jsonify, request
 import mysql.connector
 from mysql.connector import Error
@@ -9,10 +8,10 @@ CORS(app)
 
 # Configuración de la base de datos
 db_config = {
-    'user': '',
-    'password': '',
-    'host': '',
-    'database': '',
+    'user': 'root',
+    'password': 'MysqlRules1!',
+    'host': 'localhost',
+    'database': 'tech-store',
     'raise_on_warnings': True
 }
 
@@ -43,7 +42,7 @@ def get_sales_by_user():
 
     try:
         cursor = conn.cursor(dictionary=True)
-        cursor.execute("SELECT * FROM sales_by_user")
+        cursor.execute("SELECT * FROM sales_by_user ORDER BY total_ventas DESC")
         result = cursor.fetchall()
         
         # Convertimos total_ventas a float
@@ -65,7 +64,25 @@ def get_low_stock():
 
     try:
         cursor = conn.cursor(dictionary=True)
-        cursor.execute("SELECT * FROM low_stock_products")
+        cursor.execute("SELECT * FROM low_stock_products ORDER BY stock ASC")
+        result = cursor.fetchall()
+        return jsonify({'data': result, 'count': len(result)})
+    except Error as e:
+        return jsonify({'error': str(e)}), 500
+    finally:
+        if conn.is_connected():
+            cursor.close()
+            conn.close()
+
+@app.route('/api/orders', methods=['GET'])
+def get_orders():
+    conn = get_db_connection()
+    if not conn:
+        return jsonify({'error': 'Database connection failed'}), 500
+
+    try:
+        cursor = conn.cursor(dictionary=True)
+        cursor.execute("SELECT * FROM orders ORDER BY order_date DESC")
         result = cursor.fetchall()
         return jsonify({'data': result, 'count': len(result)})
     except Error as e:
@@ -83,13 +100,60 @@ def get_order_details():
 
     try:
         cursor = conn.cursor(dictionary=True)
-        cursor.execute("SELECT * FROM order_details")
+        cursor.execute("""
+            SELECT od.*, p.price as precio_unitario 
+            FROM order_details od
+            JOIN products p ON od.producto = p.name
+            ORDER BY od.fecha_pedido DESC
+        """)
+        result = cursor.fetchall()
+
+        # Convertimos total a float
+        result = convert_to_float(result, ['total', 'precio_unitario'])
+
+        return jsonify({'data': result, 'count': len(result)})
+    except Error as e:
+        return jsonify({'error': str(e)}), 500
+    finally:
+        if conn.is_connected():
+            cursor.close()
+            conn.close()
+
+@app.route('/api/order-details/<int:order_id>', methods=['GET'])
+def get_order_details_by_id(order_id):
+    conn = get_db_connection()
+    if not conn:
+        return jsonify({'error': 'Database connection failed'}), 500
+
+    try:
+        cursor = conn.cursor(dictionary=True)
+        cursor.execute("""
+            SELECT * FROM order_details 
+            WHERE pedido = %s
+            ORDER BY producto
+        """, (order_id,))
         result = cursor.fetchall()
 
         # Convertimos total a float
         result = convert_to_float(result, ['total'])
 
-        return jsonify({'data': result, 'count': len(result)})
+        if not result:
+            return jsonify({'error': 'Order not found'}), 404
+
+        # Obtener información general del pedido
+        cursor.execute("""
+            SELECT o.*, u.name as cliente 
+            FROM orders o
+            JOIN users u ON o.user_id = u.id
+            WHERE o.id = %s
+        """, (order_id,))
+        order_info = cursor.fetchone()
+
+        return jsonify({
+            'order_info': order_info,
+            'order_items': result,
+            'item_count': len(result)
+        })
     except Error as e:
         return jsonify({'error': str(e)}), 500
     finally:
@@ -112,7 +176,15 @@ def update_order_status(order_id):
         cursor = conn.cursor()
         cursor.callproc('UpdateOrderStatus', [order_id, new_status])
         conn.commit()
-        return jsonify({'message': 'Estado actualizado correctamente'})
+        
+        # Obtener el pedido actualizado
+        cursor.execute("SELECT * FROM orders WHERE id = %s", (order_id,))
+        updated_order = cursor.fetchone()
+        
+        return jsonify({
+            'message': 'Estado actualizado correctamente',
+            'order': updated_order
+        })
     except Error as e:
         conn.rollback()
         return jsonify({'error': str(e)}), 500
@@ -129,7 +201,7 @@ def get_products():
 
     try:
         cursor = conn.cursor(dictionary=True)
-        cursor.execute("SELECT * FROM products")
+        cursor.execute("SELECT * FROM products ORDER BY name")
         result = cursor.fetchall()
         return jsonify({'data': result, 'count': len(result)})
     except Error as e:
@@ -138,7 +210,6 @@ def get_products():
         if conn.is_connected():
             cursor.close()
             conn.close()
-
 
 @app.route('/api/orders/add-product', methods=['POST'])
 def add_product_to_order():
@@ -160,9 +231,41 @@ def add_product_to_order():
             data['quantity']
         ])
         conn.commit()
-        return jsonify({'message': 'Producto añadido correctamente'})
+        
+        # Obtener los detalles actualizados del pedido
+        cursor.execute("""
+            SELECT op.order_id, p.name as product_name, op.quantity, 
+                   p.price, (p.price * op.quantity) as subtotal
+            FROM order_products op
+            JOIN products p ON op.product_id = p.id
+            WHERE op.order_id = %s AND op.product_id = %s
+        """, (data['order_id'], data['product_id']))
+        added_item = cursor.fetchone()
+        
+        return jsonify({
+            'message': 'Producto añadido correctamente',
+            'added_item': added_item
+        })
     except Error as e:
         conn.rollback()
+        return jsonify({'error': str(e)}), 500
+    finally:
+        if conn.is_connected():
+            cursor.close()
+            conn.close()
+
+@app.route('/api/users', methods=['GET'])
+def get_users():
+    conn = get_db_connection()
+    if not conn:
+        return jsonify({'error': 'Database connection failed'}), 500
+
+    try:
+        cursor = conn.cursor(dictionary=True)
+        cursor.execute("SELECT * FROM users ORDER BY name")
+        result = cursor.fetchall()
+        return jsonify({'data': result, 'count': len(result)})
+    except Error as e:
         return jsonify({'error': str(e)}), 500
     finally:
         if conn.is_connected():
