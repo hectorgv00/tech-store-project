@@ -8,10 +8,10 @@ CORS(app)
 
 # Configuración de la base de datos
 db_config = {
-    'user': 'root',
-    'password': 'MysqlRules1!',
-    'host': 'localhost',
-    'database': 'tech-store',
+    'user': '',
+    'password': '',
+    'host': '¡',
+    'database': '',
     'raise_on_warnings': True
 }
 
